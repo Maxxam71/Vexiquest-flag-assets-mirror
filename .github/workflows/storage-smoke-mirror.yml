@@ -1,0 +1,114 @@
+name: Vexiquest storage smoke test - mirror
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_id:
+        description: The same test_id used in the primary smoke workflow
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vexiquest-storage-smoke-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror-verify-delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_TEST_ID: ${{ inputs.test_id }}
+      PRIMARY_REPOSITORY: Maxxam71/Vexiquest-flag-assets-w4
+    steps:
+      - name: Mirror, verify and remove disposable release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          TEST_ID="$INPUT_TEST_ID"
+          if [[ ! "$TEST_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid test_id." >&2
+            exit 2
+          fi
+
+          TAG="storage-smoke-${TEST_ID}"
+          ASSET="vexiquest-storage-smoke-${TEST_ID}.bin"
+          CHECKSUM="${ASSET}.sha256"
+          PRIMARY_RESULT="storage-smoke-primary-result-${TEST_ID}.json"
+          MIRROR_RESULT="storage-smoke-mirror-result-${TEST_ID}.json"
+          PRIMARY_BASE="https://github.com/${PRIMARY_REPOSITORY}/releases/download/${TAG}"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Disposable mirror tag already exists: $TAG" >&2
+            exit 3
+          fi
+
+          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
+            --output "$ASSET" "${PRIMARY_BASE}/${ASSET}"
+          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
+            --output "$CHECKSUM" "${PRIMARY_BASE}/${CHECKSUM}"
+          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
+            --output "$PRIMARY_RESULT" "${PRIMARY_BASE}/${PRIMARY_RESULT}"
+
+          sha256sum --check "$CHECKSUM"
+          HASH="$(sha256sum "$ASSET" | awk '{print $1}')"
+
+          MIRROR_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          cat > "$MIRROR_RESULT" <<JSON
+          {
+            "schema_version": 1,
+            "source_repository": "${PRIMARY_REPOSITORY}",
+            "mirror_repository": "${GITHUB_REPOSITORY}",
+            "tag": "${TAG}",
+            "asset": "${ASSET}",
+            "sha256": "${HASH}",
+            "mirror_download_url": "${MIRROR_URL}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "status": "MIRROR_VERIFIED_BEFORE_DISPOSABLE_DELETE"
+          }
+          JSON
+
+          gh release create "$TAG" \
+            "$ASSET" "$CHECKSUM" "$PRIMARY_RESULT" "$MIRROR_RESULT" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Disposable Vexiquest mirror test ${TEST_ID}" \
+            --notes "Temporary Stage 13A.2 mirror validation release. Not a flag pack."
+
+          mkdir verify
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir verify \
+            --pattern "$ASSET" \
+            --pattern "$CHECKSUM"
+
+          (
+            cd verify
+            sha256sum --check "$CHECKSUM"
+          )
+
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Mirror release still exists after deletion: $TAG" >&2
+            exit 4
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Mirror tag still exists after cleanup: $TAG" >&2
+            exit 5
+          fi
+
+          {
+            echo "## Mirror storage smoke test"
+            echo "- Primary tag: \`$TAG\`"
+            echo "- Asset: \`$ASSET\`"
+            echo "- Verified SHA-256: \`$HASH\`"
+            echo "- Mirror release removed: yes"
+            echo "- Mirror tag removed: yes"
+            echo "- Next action: run the primary cleanup workflow with test_id \`$TEST_ID\`"
+          } >> "$GITHUB_STEP_SUMMARY"
