@@ -13,6 +13,12 @@ on:
     paths:
       - "map-prototype/**"
       - ".github/workflows/storage-smoke-mirror.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "map-prototype/**"
+      - ".github/workflows/storage-smoke-mirror.yml"
 
 permissions:
   contents: write
@@ -23,7 +29,7 @@ concurrency:
 
 jobs:
   map-prototype-build:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -160,7 +166,7 @@ jobs:
           fi
 
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Mirror tag still exists after cleanup: $TAG" >&2
+            echo "Mirror tag still exists after cleanup." >&2
             exit 5
           fi
 
