@@ -69,18 +69,31 @@ jobs:
           gradle-version: "9.4.1"
           cache-disabled: true
 
-      - name: Build Northern Gateways test APK
+      - name: Build map helper APK
         shell: bash
         run: |
-          gradle -p map-prototype :app:assembleDebug --no-daemon --stacktrace
+          set +e
+          gradle -p map-prototype :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee map-prototype/build.log
+          STATUS=${PIPESTATUS[0]}
+          exit "$STATUS"
 
-      - name: Upload Northern Gateways test APK
+      - name: Upload build diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NorthernGateways-map-prototype-apk
+          name: all-chapters-map-helper-build-log
+          path: map-prototype/build.log
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload map helper APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-chapters-map-helper-apk
           path: map-prototype/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   mirror-verify-delete:
     if: github.event_name == 'workflow_dispatch'
@@ -169,13 +182,3 @@ jobs:
             echo "Mirror tag still exists after cleanup." >&2
             exit 5
           fi
-
-          {
-            echo "## Mirror storage smoke test"
-            echo "- Primary tag: \`$TAG\`"
-            echo "- Asset: \`$ASSET\`"
-            echo "- Verified SHA-256: \`$HASH\`"
-            echo "- Mirror release removed: yes"
-            echo "- Mirror tag removed: yes"
-            echo "- Next action: run the primary cleanup workflow with test_id \`$TEST_ID\`"
-          } >> "$GITHUB_STEP_SUMMARY"
