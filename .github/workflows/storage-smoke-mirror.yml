@@ -1,52 +1,33 @@
-name: Vexiquest public utilities
+name: Ten chapter map helper build
 
 on:
-  workflow_dispatch:
-    inputs:
-      test_id:
-        description: The same test_id used in the primary smoke workflow
-        required: true
-        type: string
-  push:
-    branches:
-      - main
-    paths:
-      - "map-prototype/**"
-      - ".github/workflows/storage-smoke-mirror.yml"
   pull_request:
     branches:
       - main
     paths:
-      - "map-prototype/**"
+      - "map-helper/**"
       - ".github/workflows/storage-smoke-mirror.yml"
 
 permissions:
-  contents: write
-
-concurrency:
-  group: vexiquest-public-utilities-${{ github.ref }}
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  map-prototype-build:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+  helper-build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Reconstruct and verify map asset
+      - name: Replace one-chapter helper with generic helper
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p map-prototype/app/src/main/res/drawable-nodpi
-          cat map-prototype/tools/northern_gateways_map.part*.b64 \
-            | tr -d '\n\r ' \
-            | base64 --decode \
-            > map-prototype/app/src/main/res/drawable-nodpi/northern_gateways_map.webp
-          echo "4d640e4cd3066f31b0f57a47d82bd498a73c7eea7e758f6a2968b08456318520  map-prototype/app/src/main/res/drawable-nodpi/northern_gateways_map.webp" \
-            | sha256sum --check
+          rm -f map-helper/app/src/main/java/com/example/expedition/ui/NorthernGatewaysMap.kt
+          mkdir -p map-helper/app/src/main/java/com/example/expedition/ui
+          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
+            --output map-helper/app/src/main/java/com/example/expedition/ui/AllChaptersMap.kt \
+            https://raw.githubusercontent.com/Maxxam71/Vexiquest-flag-assets-mirror/all-chapters-map-helper/map-prototype/app/src/main/java/com/example/expedition/ui/AllChaptersMap.kt
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -69,139 +50,28 @@ jobs:
           gradle-version: "9.4.1"
           cache-disabled: true
 
-      - name: Build Northern Gateways test APK
+      - name: Build helper APK
         shell: bash
         run: |
-          gradle -p map-prototype :app:assembleDebug --no-daemon --stacktrace
+          set +e
+          gradle -p map-helper :app:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee map-helper/build.log
+          STATUS=${PIPESTATUS[0]}
+          exit "$STATUS"
 
-      - name: Upload Northern Gateways test APK
+      - name: Upload build diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NorthernGateways-map-prototype-apk
-          path: map-prototype/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 7
-
-  tool-bundle:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Download JADX and Apktool
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir android-tools
-          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
-            --output android-tools/jadx-1.5.6.zip \
-            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip
-          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
-            --output android-tools/apktool_3.0.2.jar \
-            https://github.com/iBotPeaches/Apktool/releases/download/v3.0.2/apktool_3.0.2.jar
-          sha256sum android-tools/* > android-tools/SHA256SUMS.txt
-
-      - name: Upload Android tools
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-rebuild-tools
-          path: android-tools
-          if-no-files-found: error
+          name: all-chapters-map-helper-build-log-v2
+          path: map-helper/build.log
+          if-no-files-found: warn
           retention-days: 1
 
-  mirror-verify-delete:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      GH_TOKEN: ${{ github.token }}
-      INPUT_TEST_ID: ${{ inputs.test_id }}
-      PRIMARY_REPOSITORY: Maxxam71/Vexiquest-flag-assets-w4
-    steps:
-      - name: Mirror, verify and remove disposable release
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          TEST_ID="$INPUT_TEST_ID"
-          if [[ ! "$TEST_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "Invalid test_id." >&2
-            exit 2
-          fi
-
-          TAG="storage-smoke-${TEST_ID}"
-          ASSET="vexiquest-storage-smoke-${TEST_ID}.bin"
-          CHECKSUM="${ASSET}.sha256"
-          PRIMARY_RESULT="storage-smoke-primary-result-${TEST_ID}.json"
-          MIRROR_RESULT="storage-smoke-mirror-result-${TEST_ID}.json"
-          PRIMARY_BASE="https://github.com/${PRIMARY_REPOSITORY}/releases/download/${TAG}"
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Disposable mirror tag already exists: $TAG" >&2
-            exit 3
-          fi
-
-          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
-            --output "$ASSET" "${PRIMARY_BASE}/${ASSET}"
-          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
-            --output "$CHECKSUM" "${PRIMARY_BASE}/${CHECKSUM}"
-          curl --fail --location --retry 4 --retry-delay 2 --retry-all-errors \
-            --output "$PRIMARY_RESULT" "${PRIMARY_BASE}/${PRIMARY_RESULT}"
-
-          sha256sum --check "$CHECKSUM"
-          HASH="$(sha256sum "$ASSET" | awk '{print $1}')"
-
-          MIRROR_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
-          cat > "$MIRROR_RESULT" <<JSON
-          {
-            "schema_version": 1,
-            "source_repository": "${PRIMARY_REPOSITORY}",
-            "mirror_repository": "${GITHUB_REPOSITORY}",
-            "tag": "${TAG}",
-            "asset": "${ASSET}",
-            "sha256": "${HASH}",
-            "mirror_download_url": "${MIRROR_URL}",
-            "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
-            "status": "MIRROR_VERIFIED_BEFORE_DISPOSABLE_DELETE"
-          }
-          JSON
-
-          gh release create "$TAG" \
-            "$ASSET" "$CHECKSUM" "$PRIMARY_RESULT" "$MIRROR_RESULT" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Disposable Vexiquest mirror test ${TEST_ID}" \
-            --notes "Temporary Stage 13A.2 mirror validation release. Not a flag pack."
-
-          mkdir verify
-          gh release download "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir verify \
-            --pattern "$ASSET" \
-            --pattern "$CHECKSUM"
-
-          (
-            cd verify
-            sha256sum --check "$CHECKSUM"
-          )
-
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Mirror release still exists after deletion: $TAG" >&2
-            exit 4
-          fi
-
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Mirror tag still exists after cleanup." >&2
-            exit 5
-          fi
-
-          {
-            echo "## Mirror storage smoke test"
-            echo "- Primary tag: \`$TAG\`"
-            echo "- Asset: \`$ASSET\`"
-            echo "- Verified SHA-256: \`$HASH\`"
-            echo "- Mirror release removed: yes"
-            echo "- Mirror tag removed: yes"
-            echo "- Next action: run the primary cleanup workflow with test_id \`$TEST_ID\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload helper APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-chapters-map-helper-apk-v2
+          path: map-helper/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 1
