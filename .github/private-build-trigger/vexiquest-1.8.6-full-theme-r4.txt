@@ -1,1 +1,1 @@
-Rebuild source_ref=agent/south-american-wonders-full-theme-186 after making repeated UI patterns safe in the full theme patch. Revision 3.
+Rebuild source_ref=agent/south-american-wonders-full-theme-186 after preserving the branch's existing dedicated Expedition shapes. Revision 4.
