@@ -7,6 +7,11 @@ on:
         description: Private Vexiquest branch, tag, or commit to build
         required: true
         default: agent/northern-gateways-map-prototype
+  push:
+    branches:
+      - main
+    paths:
+      - .github/build-trigger/**
 
 permissions:
   contents: read
@@ -15,13 +20,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/northern-gateways-map-prototype' }}
 
     steps:
       - name: Check out private Vexiquest source
         uses: actions/checkout@v4
         with:
           repository: Maxxam71/Vexiquest
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ env.VEXIQUEST_SOURCE_REF }}
           token: ${{ secrets.VEXIQUEST_PAT }}
           path: vexiquest
           persist-credentials: false
