@@ -1,0 +1,54 @@
+name: Export Android APK tools
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/tool-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 14742923
+
+      - name: Install Android Build Tools 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Collect APK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$ANDROID_HOME/build-tools/36.0.0"
+          OUT="$RUNNER_TEMP/android-apk-tools"
+          mkdir -p "$OUT/lib" "$OUT/lib64"
+          cp "$SRC/apksigner" "$OUT/apksigner"
+          cp "$SRC/lib/apksigner.jar" "$OUT/lib/apksigner.jar"
+          cp "$SRC/zipalign" "$OUT/zipalign"
+          cp "$SRC/aapt2" "$OUT/aapt2"
+          if [ -f "$SRC/lib64/libc++.so" ]; then
+            cp "$SRC/lib64/libc++.so" "$OUT/lib64/libc++.so"
+          fi
+          chmod +x "$OUT/apksigner" "$OUT/zipalign" "$OUT/aapt2"
+          sha256sum "$OUT/apksigner" "$OUT/lib/apksigner.jar" "$OUT/zipalign" "$OUT/aapt2" > "$OUT/SHA256SUMS.txt"
+          if [ -f "$OUT/lib64/libc++.so" ]; then sha256sum "$OUT/lib64/libc++.so" >> "$OUT/SHA256SUMS.txt"; fi
+
+      - name: Upload APK tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-tools-${{ github.run_number }}
+          path: ${{ runner.temp }}/android-apk-tools
+          if-no-files-found: error
+          retention-days: 3
