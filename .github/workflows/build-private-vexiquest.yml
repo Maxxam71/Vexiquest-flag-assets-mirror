@@ -12,6 +12,11 @@ on:
       - main
     paths:
       - .github/build-trigger/**
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/private-build-trigger/**
 
 permissions:
   contents: read
