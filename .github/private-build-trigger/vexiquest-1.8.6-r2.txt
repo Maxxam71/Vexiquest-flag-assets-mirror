@@ -1,0 +1,2 @@
+Retry the private Vexiquest source build using the repository Gradle 9.4.1 and Android SDK 36 toolchain.
+Source ref: agent/northern-gateways-map-prototype.
