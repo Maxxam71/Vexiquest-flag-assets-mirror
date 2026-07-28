@@ -1,0 +1,61 @@
+name: Build generic APK rebuild toolchain
+
+on:
+  push:
+    branches:
+      - tooling/apk-rebuild
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager 'build-tools;36.0.0'
+
+      - name: Download Apktool
+        run: |
+          set -euo pipefail
+          mkdir -p apk-rebuild-toolchain
+          curl -fL --retry 4 \
+            https://github.com/iBotPeaches/Apktool/releases/download/v3.0.2/apktool_3.0.2.jar \
+            -o apk-rebuild-toolchain/apktool_3.0.2.jar
+
+      - name: Package signing and alignment tools
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          cp "$BUILD_TOOLS/zipalign" apk-rebuild-toolchain/
+          cp "$BUILD_TOOLS/apksigner" apk-rebuild-toolchain/
+          cp "$BUILD_TOOLS/lib/apksigner.jar" apk-rebuild-toolchain/
+          cp "$BUILD_TOOLS/lib64/libc++.so" apk-rebuild-toolchain/ || true
+          chmod +x apk-rebuild-toolchain/zipalign apk-rebuild-toolchain/apksigner
+          cat > apk-rebuild-toolchain/README.txt <<'EOF'
+Generic Android APK rebuild tools generated on a public GitHub runner.
+Contains Apktool 3.0.2 and Android Build Tools 36.0.0 signing/alignment utilities.
+No Vexiquest source code, APK, assets, credentials, or signing keys are included.
+EOF
+          sha256sum apk-rebuild-toolchain/* > apk-rebuild-toolchain/SHA256SUMS.txt
+
+      - name: Upload toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-rebuild-toolchain
+          path: apk-rebuild-toolchain/
+          retention-days: 7
+          if-no-files-found: error
