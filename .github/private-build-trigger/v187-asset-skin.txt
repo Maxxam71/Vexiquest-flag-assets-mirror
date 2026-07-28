@@ -1,3 +1,4 @@
 Build source_ref=agent/south-american-wonders-asset-skin-187
 Target versionCode=41
 Target versionName=1.8.7-south-american-wonders-asset-skin
+Revision=2-root-independent-game-icons
