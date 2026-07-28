@@ -1,0 +1,56 @@
+name: Build private Vexiquest APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private Vexiquest branch, tag, or commit to build
+        required: true
+        default: agent/northern-gateways-map-prototype
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out private Vexiquest source
+        uses: actions/checkout@v4
+        with:
+          repository: Maxxam71/Vexiquest
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.VEXIQUEST_PAT }}
+          path: vexiquest
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: vexiquest/**/*.gradle*
+
+      - name: Build debug APK
+        working-directory: vexiquest
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Record APK hashes
+        working-directory: vexiquest
+        run: |
+          find app/build/outputs/apk/debug -type f -name '*.apk' -print0 | xargs -0 sha256sum | tee app/build/outputs/apk/debug/SHA256SUMS.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vexiquest-private-debug-${{ github.run_number }}
+          path: |
+            vexiquest/app/build/outputs/apk/debug/*.apk
+            vexiquest/app/build/outputs/apk/debug/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
