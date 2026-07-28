@@ -6,7 +6,7 @@ on:
       source_ref:
         description: Private Vexiquest branch, tag, or commit to build
         required: true
-        default: agent/south-american-wonders-asset-skin-187
+        default: agent/south-american-wonders-refined-188
   push:
     branches:
       - main
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/south-american-wonders-asset-skin-187' }}
+      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/south-american-wonders-refined-188' }}
 
     steps:
       - name: Check out private Vexiquest source
@@ -57,6 +57,9 @@ jobs:
           fi
           if [ -f tools/APPLY_V186_FULL_EXPEDITION_THEME ]; then
             python3 tools/apply_v186_full_expedition_theme.py
+          fi
+          if [ -f tools/APPLY_V188_EXPEDITION_REFINEMENT ]; then
+            python3 tools/apply_v188_expedition_refinement.py
           fi
 
       - name: Set up Java 21
