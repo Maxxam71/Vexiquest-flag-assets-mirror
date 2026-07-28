@@ -1,0 +1,2 @@
+Generic public-runner trigger for the APK rebuild toolchain.
+No private application code or credentials are included.
