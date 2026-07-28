@@ -1,0 +1,2 @@
+Build the private Vexiquest source from agent/northern-gateways-map-prototype for local South American Wonders 1.8.6 integration.
+No private source, APK, credential, or signing key is stored in this marker.
