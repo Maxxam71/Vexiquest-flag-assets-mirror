@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/northern-gateways-map-prototype' }}
@@ -38,22 +38,89 @@ jobs:
           path: vexiquest
           persist-credentials: false
 
-      - name: Set up Java 17
+      - name: Apply queued Vexiquest source maintenance
+        working-directory: vexiquest
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f tools/APPLY_V1411_RUNTIME_FIXES ]; then
+            python3 tools/apply_v1411_runtime_fixes_final.py
+          fi
+          if [ -f tools/APPLY_V155_GAMEPLAY_UI_FIXES ]; then
+            python3 tools/apply_v155_gameplay_ui_fixes.py
+          fi
+          if [ -f tools/APPLY_V155_PROFILE_SCROLLBAR_COMPILE_FIX ]; then
+            python3 tools/fix_v155_profile_scrollbar_compilation.py
+          fi
+          if [ -f tools/APPLY_V155_GAMEPLAY_POLICY_FIX ]; then
+            python3 tools/fix_v155_gameplay_policy_tests.py
+          fi
+
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-          cache: gradle
-          cache-dependency-path: vexiquest/**/*.gradle*
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 14742923
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
+          cache-disabled: true
+
+      - name: Create ephemeral debug signing key when absent
+        working-directory: vexiquest
+        shell: bash
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Vexiquest Debug,O=Vexiquest,C=BR"
+          fi
 
       - name: Build debug APK
         working-directory: vexiquest
+        shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          set +e
+          gradle :app:assembleDebug --no-daemon --stacktrace > gradle-build.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            tail -n 400 gradle-build.log
+            exit "$STATUS"
+          fi
+          tail -n 100 gradle-build.log
+
+      - name: Upload Gradle diagnostics on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vexiquest-gradle-diagnostics-${{ github.run_number }}
+          path: vexiquest/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Record APK hashes
         working-directory: vexiquest
+        shell: bash
         run: |
           find app/build/outputs/apk/debug -type f -name '*.apk' -print0 | xargs -0 sha256sum | tee app/build/outputs/apk/debug/SHA256SUMS.txt
 
