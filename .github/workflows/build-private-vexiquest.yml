@@ -6,7 +6,7 @@ on:
       source_ref:
         description: Private Vexiquest branch, tag, or commit to build
         required: true
-        default: agent/northern-gateways-map-prototype
+        default: agent/south-american-wonders-full-theme-186
   push:
     branches:
       - main
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/northern-gateways-map-prototype' }}
+      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/south-american-wonders-full-theme-186' }}
 
     steps:
       - name: Check out private Vexiquest source
@@ -54,6 +54,9 @@ jobs:
           fi
           if [ -f tools/APPLY_V155_GAMEPLAY_POLICY_FIX ]; then
             python3 tools/fix_v155_gameplay_policy_tests.py
+          fi
+          if [ -f tools/APPLY_V186_FULL_EXPEDITION_THEME ]; then
+            python3 tools/apply_v186_full_expedition_theme.py
           fi
 
       - name: Set up Java 21
