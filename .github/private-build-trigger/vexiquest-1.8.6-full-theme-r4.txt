@@ -1,1 +1,1 @@
-Rebuild source_ref=agent/south-american-wonders-full-theme-186 after preserving the branch's existing dedicated Expedition shapes. Revision 4.
+Rebuild source_ref=agent/south-american-wonders-full-theme-186 using the compact direct V186 patch and dedicated ten-chapter map files. Revision 5.
