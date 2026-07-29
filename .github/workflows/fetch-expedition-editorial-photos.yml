@@ -1,0 +1,163 @@
+name: Fetch Expedition editorial photos
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/editorial-photo-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        batch: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+    steps:
+      - name: Check out private Vexiquest source
+        uses: actions/checkout@v4
+        with:
+          repository: Maxxam71/Vexiquest
+          ref: agent/south-american-wonders-reward-ledger-190
+          token: ${{ secrets.VEXIQUEST_PAT }}
+          path: vexiquest
+          persist-credentials: false
+
+      - name: Install image support
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Fetch and normalize batch
+        env:
+          BATCH: ${{ matrix.batch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+          import io
+          import json
+          import os
+          import re
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          batch = int(os.environ["BATCH"])
+          source_dir = Path("vexiquest/app/src/main/java/com/example/expedition/ui")
+          output_dir = Path("editorial-photos")
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          text = "\n".join(
+              path.read_text(encoding="utf-8")
+              for path in sorted(source_dir.glob("ExpeditionStageEditorialDataPart*.kt"))
+          )
+          pattern = re.compile(
+              r'ExpeditionStageEditorialSpec\(.*?slug\s*=\s*"([^"]+)".*?'
+              r'imageSourceUrl\s*=\s*"([^"]+)".*?'
+              r'imageOriginalFileUrl\s*=\s*"([^"]+)"',
+              re.S,
+          )
+          entries = pattern.findall(text)
+          if len(entries) != 50:
+              raise SystemExit(f"Expected 50 editorial entries, found {len(entries)}")
+
+          selected = entries[batch * 5:(batch + 1) * 5]
+          if len(selected) != 5:
+              raise SystemExit(f"Batch {batch} expected 5 entries, found {len(selected)}")
+
+          headers = {
+              "User-Agent": "Vexiquest/1.8.10 (editorial image packaging; github.com/Maxxam71)",
+              "Accept": "application/json,image/avif,image/webp,image/png,image/jpeg,*/*",
+          }
+
+          def request_bytes(url: str, timeout: int = 90) -> bytes:
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  return response.read()
+
+          def resolve_thumb(source_url: str) -> str:
+              marker = "/wiki/File:"
+              if marker not in source_url:
+                  raise ValueError(f"Unsupported Commons source URL: {source_url}")
+              title = "File:" + urllib.parse.unquote(source_url.split(marker, 1)[1])
+              params = urllib.parse.urlencode({
+                  "action": "query",
+                  "format": "json",
+                  "formatversion": "2",
+                  "prop": "imageinfo",
+                  "iiprop": "url|mime|size",
+                  "iiurlwidth": "960",
+                  "titles": title,
+              })
+              payload = json.loads(request_bytes("https://commons.wikimedia.org/w/api.php?" + params))
+              pages = payload.get("query", {}).get("pages", [])
+              info = pages[0].get("imageinfo", [])[0] if pages else {}
+              return info.get("thumburl") or info.get("url") or ""
+
+          manifest = []
+          for local_index, (slug, source_url, original_url) in enumerate(selected, start=1):
+              errors = []
+              raw = None
+              candidates = []
+              for attempt in range(1, 6):
+                  try:
+                      thumb = resolve_thumb(source_url)
+                      if thumb:
+                          candidates.append(thumb)
+                          raw = request_bytes(thumb)
+                          break
+                  except Exception as exc:
+                      errors.append(f"api/thumb attempt {attempt}: {exc}")
+                      time.sleep(min(45, 6 * attempt))
+              if raw is None:
+                  for attempt in range(1, 5):
+                      try:
+                          candidates.append(original_url)
+                          raw = request_bytes(original_url)
+                          break
+                      except Exception as exc:
+                          errors.append(f"original attempt {attempt}: {exc}")
+                          time.sleep(min(60, 10 * attempt))
+              if raw is None:
+                  raise SystemExit(f"Unable to fetch {slug}: {' | '.join(errors)}")
+
+              with Image.open(io.BytesIO(raw)) as image:
+                  image = ImageOps.exif_transpose(image)
+                  image.thumbnail((960, 720), Image.Resampling.LANCZOS)
+                  if image.mode not in ("RGB", "RGBA"):
+                      image = image.convert("RGB")
+                  target = output_dir / f"exp_stage_{slug}.webp"
+                  image.save(target, "WEBP", quality=86, method=6)
+                  with Image.open(target) as verified:
+                      verified.verify()
+                  manifest.append({
+                      "slug": slug,
+                      "file": target.name,
+                      "bytes": target.stat().st_size,
+                      "candidates": candidates,
+                  })
+                  print(f"Batch {batch}: prepared {local_index}/5 {slug} ({target.stat().st_size} bytes)")
+              time.sleep(5)
+
+          (output_dir / f"manifest-batch-{batch}.json").write_text(
+              json.dumps(manifest, indent=2, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload editorial photo batch
+        uses: actions/upload-artifact@v4
+        with:
+          name: expedition-editorial-photos-batch-${{ matrix.batch }}
+          path: editorial-photos/*
+          if-no-files-found: error
+          retention-days: 5
