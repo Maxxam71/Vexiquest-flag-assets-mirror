@@ -1,0 +1,98 @@
+name: Fetch Expedition Altiplano photo
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/editorial-altiplano-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install image support
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Fetch official Commons preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import io
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          origin = (
+              "upload.wikimedia.org/wikipedia/commons/thumb/d/d4/"
+              "Laguna_Cañapa,_Bolivia,_2016-02-03,_DD_70-74_PAN.JPG/"
+              "960px-Laguna_Cañapa,_Bolivia,_2016-02-03,_DD_70-74_PAN.JPG"
+          )
+          transport = "https://wsrv.nl/?" + urllib.parse.urlencode({
+              "url": origin,
+              "output": "jpg",
+              "q": "88",
+              "we": "1",
+          })
+          headers = {
+              "User-Agent": "Vexiquest/1.8.10 (editorial image packaging; github.com/Maxxam71)",
+              "Accept": "image/jpeg,image/webp,image/png,*/*",
+          }
+          raw = None
+          errors = []
+          for attempt in range(1, 7):
+              try:
+                  request = urllib.request.Request(transport, headers=headers)
+                  with urllib.request.urlopen(request, timeout=120) as response:
+                      payload = response.read()
+                  if len(payload) < 1024:
+                      raise ValueError(f"response too small: {len(payload)} bytes")
+                  with Image.open(io.BytesIO(payload)) as probe:
+                      probe.verify()
+                  raw = payload
+                  break
+              except Exception as exc:
+                  errors.append(f"attempt {attempt}: {exc}")
+                  time.sleep(min(30, attempt * 5))
+          if raw is None:
+              raise SystemExit("Unable to fetch Altiplano preview: " + " | ".join(errors))
+
+          output = Path("editorial-photo")
+          output.mkdir(parents=True, exist_ok=True)
+          target = output / "exp_stage_altiplano.webp"
+          with Image.open(io.BytesIO(raw)) as image:
+              image = ImageOps.exif_transpose(image)
+              if image.mode not in ("RGB", "RGBA"):
+                  image = image.convert("RGB")
+              image.save(target, "WEBP", quality=88, method=6)
+          with Image.open(target) as verified:
+              verified.verify()
+          (output / "manifest-altiplano.json").write_text(
+              json.dumps({
+                  "slug": "altiplano",
+                  "file": target.name,
+                  "bytes": target.stat().st_size,
+                  "source": "https://commons.wikimedia.org/wiki/File:Laguna_Cañapa,_Bolivia,_2016-02-03,_DD_70-74_PAN.JPG",
+                  "preview_width": 960,
+                  "transport": transport,
+              }, indent=2, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          print(f"Prepared Altiplano photo: {target.stat().st_size} bytes")
+          PY
+
+      - name: Upload Altiplano photograph
+        uses: actions/upload-artifact@v4
+        with:
+          name: expedition-editorial-photo-altiplano
+          path: editorial-photo/*
+          if-no-files-found: error
+          retention-days: 5
