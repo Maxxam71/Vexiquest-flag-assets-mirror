@@ -1,0 +1,1 @@
+Fetch the 50 audited Expedition editorial photographs for Vexiquest 1.8.10.
