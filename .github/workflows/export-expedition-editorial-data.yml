@@ -1,0 +1,38 @@
+name: Export Expedition editorial data
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/editorial-export-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out private Vexiquest source
+        uses: actions/checkout@v4
+        with:
+          repository: Maxxam71/Vexiquest
+          ref: agent/south-american-wonders-mission-ledger-189
+          token: ${{ secrets.VEXIQUEST_PAT }}
+          path: vexiquest
+          persist-credentials: false
+      - name: Collect audited editorial catalog
+        shell: bash
+        run: |
+          mkdir -p export
+          cp vexiquest/app/src/main/java/com/example/expedition/ui/ExpeditionStageEditorialContent.kt export/
+          cp vexiquest/app/src/main/java/com/example/expedition/ui/ExpeditionStageEditorialDataPart*.kt export/
+      - name: Upload editorial catalog
+        uses: actions/upload-artifact@v4
+        with:
+          name: expedition-editorial-catalog-${{ github.run_number }}
+          path: export/*.kt
+          if-no-files-found: error
+          retention-days: 2
