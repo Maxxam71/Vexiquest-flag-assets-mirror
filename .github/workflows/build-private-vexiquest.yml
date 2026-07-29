@@ -6,7 +6,7 @@ on:
       source_ref:
         description: Private Vexiquest branch, tag, or commit to build
         required: true
-        default: agent/south-american-wonders-mission-ledger-189
+        default: agent/south-american-wonders-reward-ledger-190
   push:
     branches:
       - main
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/south-american-wonders-mission-ledger-189' }}
+      VEXIQUEST_SOURCE_REF: ${{ inputs.source_ref || 'agent/south-american-wonders-reward-ledger-190' }}
 
     steps:
       - name: Check out private Vexiquest source
@@ -63,6 +63,9 @@ jobs:
           fi
           if [ -f tools/APPLY_V189_MISSION_LEDGER ]; then
             python3 tools/apply_v189_mission_ledger.py
+          fi
+          if [ -f tools/APPLY_V190_REWARD_LEDGER ]; then
+            python3 tools/apply_v190_reward_ledger.py
           fi
 
       - name: Set up Java 21
