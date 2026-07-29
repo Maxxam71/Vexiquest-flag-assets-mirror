@@ -84,8 +84,8 @@ jobs:
               with urllib.request.urlopen(req, timeout=timeout) as response:
                   return response.read()
 
-          def proxy_url(original_url: str) -> str:
-              parsed = urllib.parse.urlsplit(original_url)
+          def proxy_url(origin_url: str) -> str:
+              parsed = urllib.parse.urlsplit(origin_url)
               origin = parsed.netloc + parsed.path
               if parsed.query:
                   origin += "?" + parsed.query
@@ -100,46 +100,62 @@ jobs:
               })
 
           manifest = []
+          failures = []
           for local_index, (slug, source_url, original_url) in enumerate(selected, start=1):
               errors = []
               raw = None
-              candidates = [proxy_url(original_url)]
-              for attempt in range(1, 6):
-                  try:
-                      raw = request_bytes(candidates[0])
-                      if len(raw) < 1024:
-                          raise ValueError(f"response too small: {len(raw)} bytes")
+              chosen = None
+              candidates = [proxy_url(source_url), proxy_url(original_url)]
+              for candidate in candidates:
+                  for attempt in range(1, 4):
+                      try:
+                          raw = request_bytes(candidate)
+                          if len(raw) < 1024:
+                              raise ValueError(f"response too small: {len(raw)} bytes")
+                          chosen = candidate
+                          break
+                      except Exception as exc:
+                          errors.append(f"{candidate[:90]} attempt {attempt}: {exc}")
+                          time.sleep(min(18, 3 * attempt))
+                  if raw is not None:
                       break
-                  except Exception as exc:
-                      errors.append(f"proxy attempt {attempt}: {exc}")
-                      time.sleep(min(30, 4 * attempt))
               if raw is None:
-                  raise SystemExit(f"Unable to fetch {slug}: {' | '.join(errors)}")
+                  failures.append({"slug": slug, "source": source_url, "original": original_url, "errors": errors})
+                  print(f"Batch {batch}: deferred {slug}")
+                  continue
 
-              with Image.open(io.BytesIO(raw)) as image:
-                  image = ImageOps.exif_transpose(image)
-                  image.thumbnail((960, 720), Image.Resampling.LANCZOS)
-                  if image.mode not in ("RGB", "RGBA"):
-                      image = image.convert("RGB")
-                  target = output_dir / f"exp_stage_{slug}.webp"
-                  image.save(target, "WEBP", quality=86, method=6)
-                  with Image.open(target) as verified:
-                      verified.verify()
-                  manifest.append({
-                      "slug": slug,
-                      "file": target.name,
-                      "bytes": target.stat().st_size,
-                      "source": source_url,
-                      "original": original_url,
-                      "transport": candidates[0],
-                  })
-                  print(f"Batch {batch}: prepared {local_index}/5 {slug} ({target.stat().st_size} bytes)")
+              try:
+                  with Image.open(io.BytesIO(raw)) as image:
+                      image = ImageOps.exif_transpose(image)
+                      image.thumbnail((960, 720), Image.Resampling.LANCZOS)
+                      if image.mode not in ("RGB", "RGBA"):
+                          image = image.convert("RGB")
+                      target = output_dir / f"exp_stage_{slug}.webp"
+                      image.save(target, "WEBP", quality=86, method=6)
+                      with Image.open(target) as verified:
+                          verified.verify()
+                      manifest.append({
+                          "slug": slug,
+                          "file": target.name,
+                          "bytes": target.stat().st_size,
+                          "source": source_url,
+                          "original": original_url,
+                          "transport": chosen,
+                      })
+                      print(f"Batch {batch}: prepared {local_index}/5 {slug} ({target.stat().st_size} bytes)")
+              except Exception as exc:
+                  failures.append({"slug": slug, "source": source_url, "original": original_url, "errors": errors + [f"decode: {exc}"]})
               time.sleep(2)
 
           (output_dir / f"manifest-batch-{batch}.json").write_text(
               json.dumps(manifest, indent=2, ensure_ascii=False),
               encoding="utf-8",
           )
+          (output_dir / f"failures-batch-{batch}.json").write_text(
+              json.dumps(failures, indent=2, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          print(f"Batch {batch}: {len(manifest)} prepared, {len(failures)} deferred")
           PY
 
       - name: Upload editorial photo batch
