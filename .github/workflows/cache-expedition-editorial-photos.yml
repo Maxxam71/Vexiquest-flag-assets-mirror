@@ -1,0 +1,101 @@
+name: Cache Expedition editorial photos
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/editorial-photo-cache-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out private editorial catalog
+        uses: actions/checkout@v4
+        with:
+          repository: Maxxam71/Vexiquest
+          ref: agent/south-american-wonders-mission-ledger-189
+          token: ${{ secrets.VEXIQUEST_PAT }}
+          path: vexiquest
+          persist-credentials: false
+      - name: Download audited stage photographs gently
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, time, urllib.parse, urllib.request, urllib.error
+
+          source = Path('vexiquest/app/src/main/java/com/example/expedition/ui')
+          out = Path('editorial-photos')
+          out.mkdir(parents=True, exist_ok=True)
+          text = '\n'.join(p.read_text(encoding='utf-8') for p in sorted(source.glob('ExpeditionStageEditorialDataPart*.kt')))
+          pattern = re.compile(
+              r'ExpeditionStageEditorialSpec\(\s*'
+              r'placeName\s*=\s*"(?P<place>[^"]+)"\s*,\s*'
+              r'slug\s*=\s*"(?P<slug>[^"]+)"\s*,\s*'
+              r'imageUrl\s*=\s*"(?P<image>[^"]+)"\s*,\s*'
+              r'imageSourceUrl\s*=\s*"[^"]*"\s*,\s*'
+              r'imageOriginalFileUrl\s*=\s*"(?P<original>[^"]+)"',
+              re.DOTALL,
+          )
+          entries = [m.groupdict() for m in pattern.finditer(text)]
+          if len(entries) != 50:
+              raise SystemExit(f'Expected 50 entries, found {len(entries)}')
+
+          def thumbnail(entry):
+              original = entry['original']
+              prefix = 'https://upload.wikimedia.org/wikipedia/commons/'
+              if original.startswith(prefix):
+                  relative = original[len(prefix):]
+                  a, b, filename = relative.split('/', 2)
+                  suffix = '.png' if filename.lower().endswith('.svg') else ''
+                  return f'{prefix}thumb/{a}/{b}/{filename}/640px-{filename}{suffix}'
+              return entry['image'].replace('width=1280', 'width=640')
+
+          headers = {
+              'User-Agent': 'Vexiquest-Editorial-Cache/1.0 (+https://github.com/Maxxam71/Vexiquest-flag-assets-mirror)',
+              'Accept': 'image/jpeg,image/png,image/webp,image/*;q=0.8',
+          }
+          failures = []
+          for index, entry in enumerate(entries, 1):
+              url = thumbnail(entry)
+              target = out / f"{index:02d}_{entry['slug']}.image"
+              error = None
+              for attempt in range(6):
+                  try:
+                      request = urllib.request.Request(url, headers=headers)
+                      with urllib.request.urlopen(request, timeout=45) as response:
+                          data = response.read(16 * 1024 * 1024 + 1)
+                          content_type = response.headers.get('Content-Type', '')
+                      if len(data) > 16 * 1024 * 1024:
+                          raise ValueError('image exceeds 16 MiB')
+                      if not content_type.lower().startswith('image/'):
+                          raise ValueError(f'unexpected content type {content_type!r}')
+                      target.write_bytes(data)
+                      (out / f"{index:02d}_{entry['slug']}.url.txt").write_text(url + '\n', encoding='utf-8')
+                      print(f"Cached {index:02d}/50 {entry['slug']} ({len(data)} bytes)")
+                      error = None
+                      break
+                  except Exception as exc:
+                      error = exc
+                      delay = 20 + attempt * 15
+                      print(f"Retry {attempt + 1}/6 for {entry['slug']}: {exc}; waiting {delay}s")
+                      time.sleep(delay)
+              if error is not None:
+                  failures.append(f"{entry['slug']}: {error}")
+              time.sleep(4)
+          if failures:
+              raise SystemExit('Photo cache failures:\n' + '\n'.join(failures))
+          PY
+      - name: Upload audited stage photographs
+        uses: actions/upload-artifact@v4
+        with:
+          name: expedition-editorial-photos-${{ github.run_number }}
+          path: editorial-photos/*
+          if-no-files-found: error
+          retention-days: 2
