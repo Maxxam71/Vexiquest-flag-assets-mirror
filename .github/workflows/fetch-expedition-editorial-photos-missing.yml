@@ -1,0 +1,144 @@
+name: Fetch missing Expedition editorial photos
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/editorial-photo-missing-trigger/**
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - slug: yasuni_national_park
+            source: https://commons.wikimedia.org/wiki/File:Flickr_-_ggallice_-_Oxbow_lake,_Yasuni.jpg
+            original: https://upload.wikimedia.org/wikipedia/commons/a/a7/Flickr_-_ggallice_-_Oxbow_lake%2C_Yasuni.jpg
+          - slug: colca_canyon
+            source: https://commons.wikimedia.org/wiki/File:Colca_Canyon,_Peru_(30411878082).jpg
+            original: https://upload.wikimedia.org/wikipedia/commons/7/76/Colca_Canyon%2C_Peru_%2830411878082%29.jpg
+          - slug: qhapaq_nan_at_cusco
+            source: https://commons.wikimedia.org/wiki/File:Qhapaq_%C3%91an_,Chinchaysuyo,_08_marzo,_2026,_44.jpg
+            original: https://upload.wikimedia.org/wikipedia/commons/4/4a/Qhapaq_%C3%91an_%2CChinchaysuyo%2C_08_marzo%2C_2026%2C_44.jpg
+          - slug: altiplano
+            source: https://commons.wikimedia.org/wiki/File:Laguna_Ca%C3%B1apa,_Bolivia,_2016-02-03,_DD_70-74_PAN.JPG
+            original: https://upload.wikimedia.org/wikipedia/commons/d/d4/Laguna_Ca%C3%B1apa%2C_Bolivia%2C_2016-02-03%2C_DD_70-74_PAN.JPG
+
+    steps:
+      - name: Install image support
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Fetch normalized photograph
+        env:
+          SLUG: ${{ matrix.slug }}
+          SOURCE_URL: ${{ matrix.source }}
+          ORIGINAL_URL: ${{ matrix.original }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+          import io
+          import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          slug = os.environ["SLUG"]
+          source_url = os.environ["SOURCE_URL"]
+          original_url = os.environ["ORIGINAL_URL"]
+          output_dir = Path("editorial-photo")
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          headers = {
+              "User-Agent": "Vexiquest/1.8.10 (editorial image packaging; github.com/Maxxam71)",
+              "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*",
+          }
+
+          def request_bytes(url: str, timeout: int = 120) -> bytes:
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  return response.read()
+
+          def decoded_proxy_url(origin_url: str) -> str:
+              parsed = urllib.parse.urlsplit(origin_url)
+              decoded_path = urllib.parse.unquote(parsed.path)
+              decoded_query = urllib.parse.unquote(parsed.query)
+              origin = parsed.netloc + decoded_path
+              if decoded_query:
+                  origin += "?" + decoded_query
+              return "https://wsrv.nl/?" + urllib.parse.urlencode({
+                  "url": origin,
+                  "w": "960",
+                  "h": "720",
+                  "fit": "inside",
+                  "output": "jpg",
+                  "q": "86",
+                  "we": "1",
+              })
+
+          candidates = [decoded_proxy_url(source_url), decoded_proxy_url(original_url)]
+          raw = None
+          chosen = None
+          errors = []
+          for candidate in candidates:
+              for attempt in range(1, 6):
+                  try:
+                      payload = request_bytes(candidate)
+                      if len(payload) < 1024:
+                          raise ValueError(f"response too small: {len(payload)} bytes")
+                      with Image.open(io.BytesIO(payload)) as probe:
+                          probe.verify()
+                      raw = payload
+                      chosen = candidate
+                      break
+                  except Exception as exc:
+                      errors.append(f"attempt {attempt}: {exc}")
+                      time.sleep(min(24, attempt * 4))
+              if raw is not None:
+                  break
+          if raw is None:
+              raise SystemExit(f"Unable to fetch {slug}: {' | '.join(errors)}")
+
+          with Image.open(io.BytesIO(raw)) as image:
+              image = ImageOps.exif_transpose(image)
+              image.thumbnail((960, 720), Image.Resampling.LANCZOS)
+              if image.mode not in ("RGB", "RGBA"):
+                  image = image.convert("RGB")
+              target = output_dir / f"exp_stage_{slug}.webp"
+              image.save(target, "WEBP", quality=86, method=6)
+          with Image.open(target) as verified:
+              verified.verify()
+
+          (output_dir / f"manifest-{slug}.json").write_text(
+              json.dumps({
+                  "slug": slug,
+                  "file": target.name,
+                  "bytes": target.stat().st_size,
+                  "source": source_url,
+                  "original": original_url,
+                  "transport": chosen,
+              }, indent=2, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          print(f"Prepared {slug}: {target.stat().st_size} bytes")
+          PY
+
+      - name: Upload photograph
+        uses: actions/upload-artifact@v4
+        with:
+          name: expedition-editorial-photo-${{ matrix.slug }}
+          path: editorial-photo/*
+          if-no-files-found: error
+          retention-days: 5
