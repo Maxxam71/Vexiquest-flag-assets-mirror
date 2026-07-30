@@ -1,0 +1,4 @@
+Build source_ref=agent/south-american-wonders-reward-ledger-190
+Target versionCode=44
+Target versionName=1.8.10-south-american-wonders-reward-ledger
+Revision=embedded-compose-fix-5
