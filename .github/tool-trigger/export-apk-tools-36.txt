@@ -1,0 +1,1 @@
+Export Android Build Tools 36 APK utilities for local signing and validation.
