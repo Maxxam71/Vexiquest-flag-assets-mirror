@@ -1,0 +1,4 @@
+Build source_ref=agent/south-american-wonders-refined-188
+Target versionCode=42
+Target versionName=1.8.8-south-american-wonders-refined
+Revision=2 calibrated marker verification
