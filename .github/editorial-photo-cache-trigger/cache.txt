@@ -1,0 +1,1 @@
+Cache the 50 audited Expedition stage photographs with a rate-limited downloader.
